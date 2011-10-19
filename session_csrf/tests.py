@@ -147,6 +147,7 @@ class TestCsrfMiddleware(django.test.TestCase):
 
 
 class TestAnonymousCsrf(django.test.TestCase):
+    urls = 'session_csrf.tests'
 
     def setUp(self):
         self.token = 'a' * 32
