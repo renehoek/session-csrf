@@ -92,6 +92,14 @@ class CsrfMiddleware(object):
             return self._accept(request)
 
     def process_response(self, request, response):
+        if ('CSRF_COOKIE' in request.META and
+            request.META.get('CSRF_COOKIE_USED', False)):
+            response.set_cookie(settings.CSRF_COOKIE_NAME,
+                                request.META['CSRF_COOKIE'],
+                                max_age=60 * 60 * 24 * 7 * 52,
+                                domain=settings.CSRF_COOKIE_DOMAIN)
+            patch_vary_headers(response, ['Cookie'])
+
         if hasattr(request, 'csrf_key'):
             # Set or reset the cache and cookie timeouts.
             response.set_cookie(ANON_COOKIE, request.csrf_key,

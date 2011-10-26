@@ -11,7 +11,8 @@ from django.core import signals
 from django.core.cache import cache
 from django.core.handlers.wsgi import WSGIRequest
 from django.db import close_connection
-from django.template import context
+from django.http import HttpResponse
+from django.template import RequestContext, Template, context
 
 import mock
 
@@ -19,11 +20,19 @@ import session_csrf
 from session_csrf import CsrfMiddleware, anonymous_csrf, anonymous_csrf_exempt
 
 
+def view_with_token(request):
+    """Returns a response containing the CSRF token."""
+    t = Template("{{csrf_token}}")
+    context = RequestContext(request)
+    return HttpResponse(t.render(context))
+
+
 urlpatterns = patterns('',
     ('^$', lambda r: http.HttpResponse()),
     ('^anon$', anonymous_csrf(lambda r: http.HttpResponse())),
     ('^no-anon-csrf$', anonymous_csrf_exempt(lambda r: http.HttpResponse())),
     ('^logout$', anonymous_csrf(lambda r: logout(r) or http.HttpResponse())),
+    ('^token$', view_with_token)
 )
 
 
@@ -70,6 +79,19 @@ class TestCsrfToken(django.test.TestCase):
         self.assertEqual(r1._request.META['CSRF_COOKIE'],
                          r2._request.META['CSRF_COOKIE'])
         self.assertEqual(token, r2._request.META['CSRF_COOKIE'])
+
+    def test_cookie_sent_when_token_used(self):
+        # A CSRF cookie is sent when the CSRF token is used in a template.
+        self.login()
+        response = self.client.get('/token')
+        self.assertEqual(response.cookies['csrftoken'].value,
+                         response._request.META['CSRF_COOKIE'])
+
+    def test_cookie_not_sent(self):
+        # A CSRF cookie is not sent by default.
+        self.login()
+        response = self.client.get('/')
+        self.assertNotIn('csrftoken', response.cookies)
 
 
 class TestCsrfMiddleware(django.test.TestCase):
