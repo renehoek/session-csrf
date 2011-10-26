@@ -13,13 +13,6 @@ ANON_TIMEOUT = getattr(settings, 'ANON_TIMEOUT', 60 * 60 * 2)  # 2 hours.
 ANON_ALWAYS = getattr(settings, 'ANON_ALWAYS', False)
 
 
-# This overrides django.core.context_processors.csrf to dump our csrf_token
-# into the template context.
-def context_processor(request):
-    # Django warns about an empty token unless you call it NOTPROVIDED.
-    return {'csrf_token': getattr(request, 'csrf_token', 'NOTPROVIDED')}
-
-
 class CsrfMiddleware(object):
 
     # csrf_processing_done prevents checking CSRF more than once. That could
@@ -34,16 +27,15 @@ class CsrfMiddleware(object):
         """
         Add a CSRF token to the session for logged-in users.
 
-        The token is available at request.csrf_token.
+        The token is available at request.META['CSRF_COOKIE'].
         """
-        if hasattr(request, 'csrf_token'):
+        if 'CSRF_COOKIE' in request.META:
             return
         if request.user.is_authenticated():
             if 'csrf_token' not in request.session:
                 token = django_csrf._get_new_csrf_key()
-                request.csrf_token = request.session['csrf_token'] = token
-            else:
-                request.csrf_token = request.session['csrf_token']
+                request.session['csrf_token'] = token
+            request.META['CSRF_COOKIE'] = request.session['csrf_token']
         else:
             key = None
             token = ''
@@ -57,7 +49,7 @@ class CsrfMiddleware(object):
                     token = django_csrf._get_new_csrf_key()
                 request.csrf_key = key
                 cache.set(key, token, ANON_TIMEOUT)
-            request.csrf_token = token
+            request.META['CSRF_COOKIE'] = token
 
     def process_view(self, request, view_func, args, kwargs):
         """Check the CSRF token if this is a POST."""
@@ -86,7 +78,7 @@ class CsrfMiddleware(object):
         if user_token == '':
             user_token = request.META.get('HTTP_X_CSRFTOKEN', '')
 
-        request_token = getattr(request, 'csrf_token', '')
+        request_token = request.META.get('CSRF_COOKIE', '')
 
         # Check that both strings aren't empty and then check for a match.
         if not ((user_token or request_token)
@@ -122,7 +114,7 @@ def anonymous_csrf(f):
                 key = django_csrf._get_new_csrf_key()
                 token = django_csrf._get_new_csrf_key()
             cache.set(key, token, ANON_TIMEOUT)
-            request.csrf_token = token
+            request.META['CSRF_COOKIE'] = token
         response = f(request, *args, **kw)
         if anon:
             # Set or reset the cache and cookie timeouts.
