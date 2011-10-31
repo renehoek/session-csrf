@@ -27,12 +27,23 @@ def view_with_token(request):
     return HttpResponse(t.render(context))
 
 
+def view_without_token(request):
+    """
+    Returns a response rendered with a RequestContext that does not use
+    csrf_token.
+    """
+    t = Template("")
+    context = RequestContext(request)
+    return HttpResponse(t.render(context))
+
+
 urlpatterns = patterns('',
     ('^$', lambda r: http.HttpResponse()),
     ('^anon$', anonymous_csrf(lambda r: http.HttpResponse())),
     ('^no-anon-csrf$', anonymous_csrf_exempt(lambda r: http.HttpResponse())),
     ('^logout$', anonymous_csrf(lambda r: logout(r) or http.HttpResponse())),
-    ('^token$', view_with_token)
+    ('^token$', view_with_token),
+    ('^no-token$', view_without_token),
 )
 
 
@@ -90,7 +101,7 @@ class TestCsrfToken(django.test.TestCase):
     def test_cookie_not_sent(self):
         # A CSRF cookie is not sent by default.
         self.login()
-        response = self.client.get('/')
+        response = self.client.get('/no-token')
         self.assertNotIn('csrftoken', response.cookies)
 
 
