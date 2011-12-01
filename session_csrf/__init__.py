@@ -113,8 +113,8 @@ def anonymous_csrf(f):
     """Decorator that assigns a CSRF token to an anonymous user."""
     @functools.wraps(f)
     def wrapper(request, *args, **kw):
-        anon = not request.user.is_authenticated() and not ANON_ALWAYS
-        if anon:
+        use_anon_cookie = not (request.user.is_authenticated() or ANON_ALWAYS)
+        if use_anon_cookie:
             if ANON_COOKIE in request.COOKIES:
                 key = request.COOKIES[ANON_COOKIE]
                 token = cache.get(key) or django_csrf._get_new_csrf_key()
@@ -124,7 +124,7 @@ def anonymous_csrf(f):
             cache.set(key, token, ANON_TIMEOUT)
             request.META['CSRF_COOKIE'] = token
         response = f(request, *args, **kw)
-        if anon:
+        if use_anon_cookie:
             # Set or reset the cache and cookie timeouts.
             response.set_cookie(ANON_COOKIE, key, max_age=ANON_TIMEOUT,
                                 httponly=True, secure=request.is_secure())
