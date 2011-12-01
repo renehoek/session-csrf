@@ -47,7 +47,7 @@ class CsrfMiddleware(object):
                     key = django_csrf._get_new_csrf_key()
                 if not token:
                     token = django_csrf._get_new_csrf_key()
-                request.csrf_key = key
+                request._anon_csrf_key = key
                 cache.set(key, token, ANON_TIMEOUT)
             request.META['CSRF_COOKIE'] = token
 
@@ -100,9 +100,9 @@ class CsrfMiddleware(object):
                                 domain=settings.CSRF_COOKIE_DOMAIN)
             patch_vary_headers(response, ['Cookie'])
 
-        if hasattr(request, 'csrf_key'):
+        if hasattr(request, '_anon_csrf_key'):
             # Set or reset the cache and cookie timeouts.
-            response.set_cookie(ANON_COOKIE, request.csrf_key,
+            response.set_cookie(ANON_COOKIE, request._anon_csrf_key,
                                 max_age=ANON_TIMEOUT, httponly=True,
                                 secure=request.is_secure())
             patch_vary_headers(response, ['Cookie'])
