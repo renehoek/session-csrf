@@ -1,6 +1,7 @@
 from collections import namedtuple
 from contextlib import contextmanager
 
+from django.conf import settings
 import django.test
 from django import http
 from django.conf.urls.defaults import patterns
@@ -358,6 +359,26 @@ class TestAnonAlways(django.test.TestCase):
         cache.clear()
         response = self.client.get('/')
         self.assertEqual(len(response._request.META['CSRF_COOKIE']), 32)
+
+    def test_csrf_cookie_secure(self):
+        old_CSRF_COOKIE_SECURE = settings.CSRF_COOKIE_SECURE
+        settings.CSRF_COOKIE_SECURE = True
+
+        self.login()
+        response = self.client.get('/token')
+        self.assertTrue(response.cookies[settings.CSRF_COOKIE_NAME]['secure'])
+
+        settings.CSRF_COOKIE_SECURE = old_CSRF_COOKIE_SECURE
+
+    def test_csrf_cookie_secure_false(self):
+        old_CSRF_COOKIE_SECURE = settings.CSRF_COOKIE_SECURE
+        settings.CSRF_COOKIE_SECURE = False
+
+        self.login()
+        response = self.client.get('/token')
+        self.assertFalse(response.cookies[settings.CSRF_COOKIE_NAME]['secure'])
+
+        settings.CSRF_COOKIE_SECURE = old_CSRF_COOKIE_SECURE
 
 
 class ClientHandler(django.test.client.ClientHandler):
