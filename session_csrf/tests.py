@@ -380,6 +380,39 @@ class TestAnonAlways(django.test.TestCase):
 
         settings.CSRF_COOKIE_SECURE = old_CSRF_COOKIE_SECURE
 
+    def test_csrf_cookie_httponly(self):
+        old_CSRF_COOKIE_HTTPONLY = getattr(settings, 'CSRF_COOKIE_HTTPONLY',
+                                           None)
+        settings.CSRF_COOKIE_HTTPONLY = True
+
+        self.login()
+        response = self.client.get('/token')
+        self.assertTrue(response.cookies[settings.CSRF_COOKIE_NAME]['httponly'])
+
+        settings.CSRF_COOKIE_HTTPONLY = old_CSRF_COOKIE_HTTPONLY
+
+    def test_csrf_cookie_httponly_false(self):
+        old_CSRF_COOKIE_HTTPONLY = getattr(settings, 'CSRF_COOKIE_HTTPONLY',
+                                           None)
+        settings.CSRF_COOKIE_HTTPONLY = False
+
+        self.login()
+        resp = self.client.get('/token')
+        self.assertFalse(resp.cookies[settings.CSRF_COOKIE_NAME]['httponly'])
+
+        settings.CSRF_COOKIE_HTTPONLY = old_CSRF_COOKIE_HTTPONLY
+
+    def test_csrf_cookie_httponly_missing(self):
+        old_CSRF_COOKIE_HTTPONLY = getattr(settings, 'CSRF_COOKIE_HTTPONLY',
+                                           None)
+        delattr(settings, 'CSRF_COOKIE_HTTPONLY')
+
+        self.login()
+        resp = self.client.get('/token')
+        self.assertFalse(resp.cookies[settings.CSRF_COOKIE_NAME]['httponly'])
+
+        settings.CSRF_COOKIE_HTTPONLY = old_CSRF_COOKIE_HTTPONLY
+
 
 class ClientHandler(django.test.client.ClientHandler):
     """

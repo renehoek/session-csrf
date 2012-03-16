@@ -94,11 +94,14 @@ class CsrfMiddleware(object):
     def process_response(self, request, response):
         if ('CSRF_COOKIE' in request.META and
             request.META.get('CSRF_COOKIE_USED', False)):
-            response.set_cookie(settings.CSRF_COOKIE_NAME,
-                                request.META['CSRF_COOKIE'],
-                                max_age=60 * 60 * 24 * 7 * 52,
-                                domain=settings.CSRF_COOKIE_DOMAIN,
-                                secure=settings.CSRF_COOKIE_SECURE or None)
+            response.set_cookie(
+                settings.CSRF_COOKIE_NAME,
+                request.META['CSRF_COOKIE'],
+                max_age=60 * 60 * 24 * 7 * 52,
+                domain=settings.CSRF_COOKIE_DOMAIN,
+                secure=settings.CSRF_COOKIE_SECURE or None,
+                httponly=getattr(settings, 'CSRF_COOKIE_HTTPONLY', None),
+            )
             patch_vary_headers(response, ['Cookie'])
 
         if hasattr(request, '_anon_csrf_key'):
