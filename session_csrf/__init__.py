@@ -99,7 +99,7 @@ class CsrfMiddleware(object):
                 request.META['CSRF_COOKIE'],
                 max_age=60 * 60 * 24 * 7 * 52,
                 domain=settings.CSRF_COOKIE_DOMAIN,
-                secure=settings.CSRF_COOKIE_SECURE or None,
+                secure=getattr(settings, 'CSRF_COOKIE_SECURE', None),
                 httponly=getattr(settings, 'CSRF_COOKIE_HTTPONLY', None),
             )
             patch_vary_headers(response, ['Cookie'])

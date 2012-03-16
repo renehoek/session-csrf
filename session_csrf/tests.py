@@ -380,6 +380,16 @@ class TestAnonAlways(django.test.TestCase):
 
         settings.CSRF_COOKIE_SECURE = old_CSRF_COOKIE_SECURE
 
+    def test_csrf_cookie_secure_missing(self):
+        old_CSRF_COOKIE_SECURE = getattr(settings, 'CSRF_COOKIE_SECURE', None)
+        delattr(settings, 'CSRF_COOKIE_SECURE')
+
+        self.login()
+        resp = self.client.get('/token')
+        self.assertFalse(resp.cookies[settings.CSRF_COOKIE_NAME]['secure'])
+
+        settings.CSRF_COOKIE_SECURE = old_CSRF_COOKIE_SECURE
+
     def test_csrf_cookie_httponly(self):
         old_CSRF_COOKIE_HTTPONLY = getattr(settings, 'CSRF_COOKIE_HTTPONLY',
                                            None)
