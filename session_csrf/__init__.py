@@ -107,8 +107,7 @@ class CsrfMiddleware(object):
         if hasattr(request, '_anon_csrf_key'):
             # Set or reset the cache and cookie timeouts.
             response.set_cookie(ANON_COOKIE, request._anon_csrf_key,
-                                max_age=ANON_TIMEOUT, httponly=True,
-                                secure=request.is_secure())
+                                httponly=True, secure=request.is_secure())
             patch_vary_headers(response, ['Cookie'])
         return response
 
@@ -130,8 +129,8 @@ def anonymous_csrf(f):
         response = f(request, *args, **kw)
         if use_anon_cookie:
             # Set or reset the cache and cookie timeouts.
-            response.set_cookie(ANON_COOKIE, key, max_age=ANON_TIMEOUT,
-                                httponly=True, secure=request.is_secure())
+            response.set_cookie(ANON_COOKIE, key, httponly=True,
+                                secure=request.is_secure())
             patch_vary_headers(response, ['Cookie'])
         return response
     return wrapper
