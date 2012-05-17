@@ -97,7 +97,7 @@ class CsrfMiddleware(object):
             response.set_cookie(
                 settings.CSRF_COOKIE_NAME,
                 request.META['CSRF_COOKIE'],
-                max_age=60 * 60 * 24 * 7 * 52,
+                max_age=60 * 60 * 24 * 366,
                 domain=settings.CSRF_COOKIE_DOMAIN,
                 secure=getattr(settings, 'CSRF_COOKIE_SECURE', None),
                 httponly=getattr(settings, 'CSRF_COOKIE_HTTPONLY', None),
