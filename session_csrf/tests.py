@@ -2,6 +2,7 @@ import django.test
 from django import http
 from django.conf.urls.defaults import patterns
 from django.contrib.auth import logout
+from django.contrib.auth.middleware import AuthenticationMiddleware
 from django.contrib.auth.models import User
 from django.contrib.sessions.models import Session
 from django.core import signals
@@ -92,6 +93,8 @@ class TestCsrfMiddleware(django.test.TestCase):
         }
         # Hack to set up request middleware.
         ClientHandler()(self.rf._base_environ(**r))
+        auth_mw = AuthenticationMiddleware()
+        auth_mw.process_request(request)
         self.mw.process_request(request)
         self.assertEqual(request.csrf_token, 'woo')
 
