@@ -1,5 +1,6 @@
 import django.test
 from django import http
+from django.conf import settings
 from django.conf.urls.defaults import patterns
 from django.contrib.auth import logout
 from django.contrib.auth.middleware import AuthenticationMiddleware
@@ -78,6 +79,11 @@ class TestCsrfMiddleware(django.test.TestCase):
         self.token = 'a' * 32
         self.rf = django.test.RequestFactory()
         self.mw = CsrfMiddleware()
+        self.save_CSRF_FAILURE_VIEW = settings.CSRF_FAILURE_VIEW
+        settings.CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
+
+    def tearDown(self):
+        settings.CSRF_FAILURE_VIEW = self.save_CSRF_FAILURE_VIEW
 
     def process_view(self, request, view=None):
         return self.mw.process_view(request, view, None, None)
@@ -178,9 +184,12 @@ class TestAnonymousCsrf(django.test.TestCase):
         self.client.handler = ClientHandler(enforce_csrf_checks=True)
         self.save_ANON_ALWAYS = session_csrf.ANON_ALWAYS
         session_csrf.ANON_ALWAYS = False
+        self.save_CSRF_FAILURE_VIEW = settings.CSRF_FAILURE_VIEW
+        settings.CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
     def tearDown(self):
         session_csrf.ANON_ALWAYS = self.save_ANON_ALWAYS
+        settings.CSRF_FAILURE_VIEW = self.save_CSRF_FAILURE_VIEW
 
     def login(self):
         assert self.client.login(username='jbalogh', password='password')
@@ -275,9 +284,12 @@ class TestAnonAlways(django.test.TestCase):
         self.client.handler = ClientHandler(enforce_csrf_checks=True)
         self.save_ANON_ALWAYS = session_csrf.ANON_ALWAYS
         session_csrf.ANON_ALWAYS = True
+        self.save_CSRF_FAILURE_VIEW = settings.CSRF_FAILURE_VIEW
+        settings.CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
     def tearDown(self):
         session_csrf.ANON_ALWAYS = self.save_ANON_ALWAYS
+        settings.CSRF_FAILURE_VIEW = self.save_CSRF_FAILURE_VIEW
 
     def login(self):
         assert self.client.login(username='jbalogh', password='password')
