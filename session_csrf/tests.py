@@ -28,6 +28,7 @@ urlpatterns = patterns('',
 
 
 class TestCsrfToken(django.test.TestCase):
+    urls = 'session_csrf.tests'
 
     def setUp(self):
         self.client.handler = ClientHandler()
