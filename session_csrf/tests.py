@@ -102,7 +102,7 @@ class TestCsrfMiddleware(django.test.TestCase):
         ClientHandler()(self.rf._base_environ(**r))
         auth_mw = AuthenticationMiddleware()
         auth_mw.process_request(request)
-        self.mw.process_request(request)
+        self.mw.process_view(request, lambda: None, [], {})
         self.assertEqual(request.csrf_token, 'woo')
 
     def test_set_csrftoken_once(self):
