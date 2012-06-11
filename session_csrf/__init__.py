@@ -77,8 +77,8 @@ class CsrfMiddleware(object):
                 cache.set(PREFIX + key, token, ANON_TIMEOUT)
                 request.csrf_token = token
 
-        # Bail if this is a safe method.
-        if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+        # Bail if this isn't a POST.
+        if request.method != 'POST':
             return self._accept(request)
 
         # The test client uses this to get around CSRF processing.

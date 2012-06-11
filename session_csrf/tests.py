@@ -131,10 +131,6 @@ class TestCsrfMiddleware(django.test.TestCase):
     def test_unsafe_methods(self):
         self.assertEqual(self.process_view(self.rf.post('/')).status_code,
                          403)
-        self.assertEqual(self.process_view(self.rf.put('/')).status_code,
-                         403)
-        self.assertEqual(self.process_view(self.rf.delete('/')).status_code,
-                         403)
 
     def test_csrfmiddlewaretoken(self):
         # The user token should be found in POST['csrfmiddlewaretoken'].
