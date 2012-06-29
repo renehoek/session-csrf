@@ -80,10 +80,13 @@ class TestCsrfMiddleware(django.test.TestCase):
         self.token = 'a' * 32
         self.rf = django.test.RequestFactory()
         self.mw = CsrfMiddleware()
+        self.save_ANON_ALWAYS = session_csrf.ANON_ALWAYS
+        session_csrf.ANON_ALWAYS = False
         self.save_CSRF_FAILURE_VIEW = settings.CSRF_FAILURE_VIEW
         settings.CSRF_FAILURE_VIEW = 'django.views.csrf.csrf_failure'
 
     def tearDown(self):
+        session_csrf.ANON_ALWAYS = self.save_ANON_ALWAYS
         settings.CSRF_FAILURE_VIEW = self.save_CSRF_FAILURE_VIEW
 
     def process_view(self, request, view=None):
