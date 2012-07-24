@@ -87,7 +87,9 @@ class CsrfMiddleware(object):
 
         # Try to get the token from the POST and fall back to looking at the
         # X-CSRFTOKEN header.
-        user_token = request.POST.get('csrfmiddlewaretoken', '')
+        user_token = ''
+        if request.method == 'POST':
+            user_token = request.POST.get('csrfmiddlewaretoken', '')
         if user_token == '':
             user_token = request.META.get('HTTP_X_CSRFTOKEN', '')
 
