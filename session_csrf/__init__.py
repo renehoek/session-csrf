@@ -1,6 +1,4 @@
 """CSRF protection without cookies."""
-import functools
-
 from django.conf import settings
 from django.core.cache import cache
 from django.middleware import csrf as django_csrf
