@@ -106,6 +106,13 @@ the following setting:
         Default: False
 
 
+A CSRF token cookie is not sent because it is not needed for CSRF
+protection.  If you have AJAX code or other web services that need a
+CSRF token cookie, consider using the `django-session-csrf-cookie
+<https://github.com/trustcentric/django-session-csrf-cookie>`_
+middleware in addition to this one.
+
+
 Why do I want this?
 -------------------
 
