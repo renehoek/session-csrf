@@ -7,17 +7,56 @@ the server using Django's session backend. The csrf token must still be
 included in all POST requests (either with `csrfmiddlewaretoken` in the form or
 with the `X-CSRFTOKEN` header).
 
+Why this replacement?
+---------------------
+
+The default Django CSRF protection provides adequate protection against CSRF attacks.
+So there is no reason from security perspective to switch to this alternative.
+
+I programmed this implementation because a external security assement agency found that
+the default Django CSRF protection does not follow the OWASP 'Synchronizer Token Pattern'
+recommendation:
+https://www.owasp.org/index.php/Cross-Site_Request_Forgery_%28CSRF%29_Prevention_Cheat_Sheet
+
+Following this OWASP recommendation was a security-requirement for one of our projects.
+
+How does this implementation work?
+-----------------------------------
+For a initial request CSRF token is generated and appended to a list of tokens stored in the session.
+In the forms you want to protect you include the CSRF token as a hidden input element
+with the '{{csrf_token}}' template tag. When the form is posted, a check is done on the server
+to see if the posted CSRF Token matches one of the tokens on the list stored in the session.
+
+If the server side check is succesful a new CSRF token is generated and appended to
+the list of tokens stored in the session.
+
+The list of tokens stored in the session will store a maximum of 5 CSRF Tokens.
+If a 6th CSRF Token is added, the oldest CSRF Token on the list will be removed.
+
+So at any time this CSRF implementation will accept the 5 latests issued CSRF
+tokens for a particuliar session.
+This is done to prevent the CSRF protection from kicking in when the visitor opens the
+website in a second tab in his browser for example.
+
+If the CSRFToken is added as a 'X_CSRFTOKEN' header in the HTTP POST, no new CSRF token
+is generated. This is done because this HTTP POST is likely to be from a Ajax call
+or something similair. So this Ajax client can do his request multiple times,
+without his CSRFToken to expire.
+
+For each generated CSRF Token in the list a timestamp 'created'
+is kept. CSRF Tokens older then 24 hours are removed from the list.
+This cleaning up is done when a HTTP POST is received by the server.
+
+Credits
+-------
+I based this CSRF protection implemenation on https://github.com/scjody/django-session-csrf
 
 Installation
 ------------
 
-From PyPI::
-
-    pip install django-session-csrf
-
 From github::
 
-    git clone git://github.com/mozilla/django-session-csrf.git
+    git clone git://github.com/renehoek/django-session-csrf.git
 
 Replace ``django.core.context_processors.csrf`` with
 ``session_csrf.context_processor`` in your ``TEMPLATE_CONTEXT_PROCESSORS``::
@@ -48,83 +87,91 @@ Then we have to monkeypatch Django to fix the ``@csrf_protect`` decorator::
 Make sure that's in something like your root ``urls.py`` so the patch gets
 applied before your views are imported.
 
+Settings
+--------
+
+In the Django settings.py file you can set the following settings:
+
+CSRF_STRICT_REFERER_CHECKING = ['True|False'] Default: True
+
+In a SSL setup peform a strict referer check.
+
+CSRF_NUMBER_OF_TOKENS_TO_KEEP = 5
+
+The number of previous issued tokens to keep in the list stored in the session.
+
+CSRF_REMOVE_UNUSED_TOKENS_AFTER = 86400 
+
+The max-age in seconds of issued tokens. Tokens older then the max-age are removed from the list stored in the session.
+
+Disadvantages
+------------
+This CSRF implemenation is tied to the Django session framework. You can't use it
+without sessions enabled.
+
+It is not recommended to use 'Cookie-bases-sessions'. Otherwise you will leak previously
+issued CSRF tokens.
+https://docs.djangoproject.com/en/dev/topics/http/sessions/#using-cookie-based-sessions
+
+Don't confuse this with the 'sessionid' cookies which just store a reference to a session
+in a cookie.
 
 Differences from Django
 -----------------------
 
-``django-session-csrf`` does not assign CSRF tokens to anonymous users because
-we don't want to support a session for every anonymous user. Instead, views
-that need anonymous forms can be decorated with ``@anonymous_csrf``::
-
-    from session_csrf import anonymous_csrf
-
-    @anonymous_csrf
-    def login(request):
-        ...
-
-``anonymous_csrf`` uses the cache to give anonymous users a lightweight
-session. It sends a cookie to uniquely identify the user and stores the CSRF
-token in the cache.  It can be controlled through these settings:
-
-    ``ANON_COOKIE``
-        the name used for the anonymous user's cookie
-
-        Default: ``anoncsrf``
-
-    ``ANON_TIMEOUT``
-        the cache timeout (in seconds) to use for the anonymous CSRF tokens
-
-        Default: ``60 * 60 * 2  # 2 hours``
-
-Note that by default Django uses local-memory caching, which will not
-work with anonymous CSRF if there is more than one web server thread.
-To use anonymous CSRF, you must configure a cache that's shared
-between web server instances, such as Memcached.  See the `Django cache
-documentation <https://docs.djangoproject.com/en/dev/topics/cache/>`_
-for more information.
-
-
-If you only want a view to have CSRF protection for logged-in users, you can
-use the ``anonymous_csrf_exempt`` decorator. This could be useful if the
-anonymous view is protected through a CAPTCHA, for example.
-
-::
-
-    from session_csrf import anonymous_csrf_exempt
-
-    @anonymous_csrf_exempt
-    def protected_in_another_way(request):
-        ...
-
-
-If you want all views to have CSRF protection for anonymous users, use
-the following setting:
-
-    ``ANON_ALWAYS``
-        always provide CSRF protection for anonymous users
-
-        Default: False
-
+In this implementation 'anonymous' users will also get a session.
+This is needed in order to store the CSRF Token server-side.
 
 A CSRF token cookie is not sent because it is not needed for CSRF
 protection.  If you have AJAX code or other web services that need a
-CSRF token cookie, consider using the `django-session-csrf-cookie
-<https://github.com/trustcentric/django-session-csrf-cookie>`_
-middleware in addition to this one.
+CSRF token, you can add the '{{csrf_token_tag}}' on the template and
+send it as a 'X_CSRFTOKEN' header with the following javascript (assumes jQuery):
+
+$(document).ajaxSend(function(event, xhr, settings) {
+    
+    function getElementWithCSRFToken(name) {
+        if (document.getElementsByName(name).length == 1) {
+            return document.getElementsByName(name)[0].value
+        }
+        return ""
+    }
+    
+    function sameOrigin(url) {
+        // url could be relative or scheme relative or absolute
+        var host = document.location.host; // host + port
+        var protocol = document.location.protocol;
+        var sr_origin = '//' + host;
+        var origin = protocol + sr_origin;
+        // Allow absolute or scheme relative URLs to same origin
+        return (url == origin || url.slice(0, origin.length + 1) == origin + '/') ||
+            (url == sr_origin || url.slice(0, sr_origin.length + 1) == sr_origin + '/') ||
+            // or any other URL that isn't scheme relative or absolute i.e relative.
+            !(/^(\/\/|http:|https:).*/.test(url));
+    }
+    function safeMethod(method) {
+        return (/^(GET|HEAD|OPTIONS|TRACE)$/.test(method));
+    }
+
+    if (!safeMethod(settings.type) && sameOrigin(settings.url)) {
+        xhr.setRequestHeader("X-CSRFToken", getElementWithCSRFToken('csrfmiddlewaretoken'));
+    }
+});
 
 
 Why do I want this?
 -------------------
 
-1. Your site is on a subdomain with other sites that are not under your
-   control, so cookies could come from anywhere.
-2. You're worried about attackers using Flash to forge HTTP headers.
-3. You're tired of requiring a Referer header.
-
+1. You must follow the OWASP 'Synchronizer Token Pattern' recommendation
+   
 
 Why don't I want this?
 ----------------------
 
 1. Storing tokens in sessions means you have to hit your session store more
    often.
-2. It's a little bit more work to CSRF-protect forms for anonymous users.
+
+Final Notes
+-----------
+The test-suite included in this project is just a copy of the test-suite
+in the project I based this project on.
+I did not run the test-suite, so it will probably fail.

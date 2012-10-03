@@ -4,13 +4,15 @@ from django.core.cache import cache
 from django.middleware import csrf as django_csrf
 from django.utils import crypto
 from django.utils.cache import patch_vary_headers
+from django.utils.http import same_origin
+import datetime
 
+from django.utils.log import getLogger
+logger = getLogger('django.request')
 
-ANON_COOKIE = getattr(settings, 'ANON_COOKIE', 'anoncsrf')
-ANON_TIMEOUT = getattr(settings, 'ANON_TIMEOUT', 60 * 60 * 2)  # 2 hours.
-ANON_ALWAYS = getattr(settings, 'ANON_ALWAYS', False)
-PREFIX = 'sessioncsrf:'
-
+CSRF_STRICT_REFERER_CHECKING = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
+CSRF_NUMBER_OF_TOKENS_TO_KEEP = getattr(settings, 'CSRF_NUMBER_OF_TOKENS_TO_KEEP', 5)
+CSRF_REMOVE_UNUSED_TOKENS_AFTER = getattr(settings, 'CSRF_NUMBER_OF_TOKENS_TO_KEEP', 86400)
 
 # This overrides django.core.context_processors.csrf to dump our csrf_token
 # into the template context.
@@ -25,55 +27,67 @@ class CsrfMiddleware(object):
     # happen if the requires_csrf_token decorator is used.
     def _accept(self, request):
         request.csrf_processing_done = True
+        return None
 
     def _reject(self, request, reason):
         return django_csrf._get_failure_view()(request, reason)
 
+
+    def _add_csrf_token_in_session(self, request):
+        if 'csrf_tokens' not in request.session:
+            request.session['csrf_tokens'] = []
+        
+        token = django_csrf._get_new_csrf_key()
+        request.session['csrf_tokens'].append({'token_value': token, 'created': datetime.datetime.now()})
+
+        return token
+
+    def _is_user_token_in_session_tokens(self, request, user_token):
+        if 'csrf_tokens' not in request.session:
+            return False
+        
+        for token in request.session['csrf_tokens']:
+            if crypto.constant_time_compare(user_token, token['token_value']):
+                return True
+        return False
+    
+    def _remove_old_tokens_from_session(self, request):
+        request.session['csrf_tokens'] = request.session['csrf_tokens'][-CSRF_NUMBER_OF_TOKENS_TO_KEEP:]
+        
+        current_timestamp = datetime.datetime.now()
+        left_over_tokens = []
+        for token in request.session['csrf_tokens']:
+            if (current_timestamp - token['created']).seconds < CSRF_REMOVE_UNUSED_TOKENS_AFTER:
+                left_over_tokens.append(token)
+        
+        request.session['csrf_tokens'] = left_over_tokens
+
     def process_request(self, request):
         """
-        Add a CSRF token to the session for logged-in users.
+        Add a CSRF token to the session.
 
-        The token is available at request.csrf_token.
+        The last token added is available at request.csrf_token. By doing so the 'csrf_token' template tag has access to the token.
         """
         if hasattr(request, 'csrf_token'):
             return
-        if request.user.is_authenticated():
-            if 'csrf_token' not in request.session:
-                token = django_csrf._get_new_csrf_key()
-                request.csrf_token = request.session['csrf_token'] = token
-            else:
-                request.csrf_token = request.session['csrf_token']
+
+        if 'csrf_tokens' not in request.session or len(request.session['csrf_tokens']) == 0:
+            token = self._add_csrf_token_in_session(request)
+            request.csrf_token = token
         else:
-            request.csrf_token = ''     # to be filled in later if applicable
+            request.csrf_token = request.session['csrf_tokens'][-1]['token_value']
+            
+        self._remove_old_tokens_from_session(request)
+        
 
     def process_view(self, request, view_func, args, kwargs):
         """Check the CSRF token if this is a POST."""
         if getattr(request, 'csrf_processing_done', False):
-            return
+            return None
 
         # Allow @csrf_exempt views.
         if getattr(view_func, 'csrf_exempt', False):
-            return
-
-        if (getattr(view_func, 'anonymous_csrf_exempt', False)
-            and not request.user.is_authenticated()):
-            return
-
-        if hasattr(request, 'user') and not request.user.is_authenticated():
-            if ANON_ALWAYS or getattr(view_func, 'anonymous_csrf', False):
-                key = None
-                token = ''
-                if ANON_COOKIE in request.COOKIES:
-                    key = request.COOKIES[ANON_COOKIE]
-                    token = cache.get(PREFIX + key, '')
-                if not key:
-                    key = django_csrf._get_new_csrf_key()
-                if not token:
-                    token = django_csrf._get_new_csrf_key()
-
-                request._anon_csrf_key = key
-                cache.set(PREFIX + key, token, ANON_TIMEOUT)
-                request.csrf_token = token
+            return None
 
         # Bail if this is a safe method.
         if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
@@ -83,46 +97,61 @@ class CsrfMiddleware(object):
         if getattr(request, '_dont_enforce_csrf_checks', False):
             return self._accept(request)
 
-        # Try to get the token from the POST and fall back to looking at the
-        # X-CSRFTOKEN header.
+        # This is a POST, so insist on a CSRF cookie
+
+        if CSRF_STRICT_REFERER_CHECKING and request.is_secure():
+            referer = request.META.get('HTTP_REFERER')
+            if referer is None:
+                logger.warning('Forbidden (%s): %s',
+                               django_csrf.REASON_NO_REFERER, request.path,
+                    extra={
+                        'status_code': 403,
+                        'request': request,
+                    }
+                )
+                return self._reject(request, django_csrf.REASON_NO_REFERER)
+
+            # Note that request.get_host() includes the port.
+            good_referer = 'https://%s/' % request.get_host()
+            if not same_origin(referer, good_referer):
+                reason = django_csrf.REASON_BAD_REFERER % (referer, good_referer)
+                logger.warning('Forbidden (%s): %s', reason, request.path,
+                    extra={
+                        'status_code': 403,
+                        'request': request,
+                    }
+                )
+                return self._reject(request, reason)
+
+        # Try to get the token from the POST and fall back to looking at the X-CSRFTOKEN header.
+        #
+        #Generate a new token, except if the user_token is in 'HTTP_X_CSRFTOKEN'. This is probally a ajax call which will be repeated for some time.
+        #Ajax clients don't make a typical 'client --> POST --> Server ---> Response Redirect --> Client --> GET --> Server' cycle.
+        #So the CSRF Token template tag is never updated in the browsser
+        #
         user_token = ''
+        generate_new_token = True 
         if request.method == 'POST':
             user_token = request.POST.get('csrfmiddlewaretoken', '')
         if user_token == '':
+            generate_new_token = False
             user_token = request.META.get('HTTP_X_CSRFTOKEN', '')
 
-        request_token = getattr(request, 'csrf_token', '')
-
-        # Check that both strings aren't empty and then check for a match.
-        if not ((user_token or request_token)
-                and crypto.constant_time_compare(user_token, request_token)):
-            reason = django_csrf.REASON_BAD_TOKEN
+        user_token = django_csrf._sanitize_token(user_token)
+        
+        # Check that both strings match.
+        if not self._is_user_token_in_session_tokens(request, user_token):
             django_csrf.logger.warning(
-                'Forbidden (%s): %s' % (reason, request.path),
+                'Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path),
                 extra=dict(status_code=403, request=request))
-            return self._reject(request, reason)
-        else:
-            return self._accept(request)
-
+            return self._reject(request, django_csrf.REASON_BAD_TOKEN)
+        
+        if generate_new_token:
+            token = self._add_csrf_token_in_session(request)
+            request.csrf_token = token
+            
     def process_response(self, request, response):
-        if hasattr(request, '_anon_csrf_key'):
-            # Set or reset the cache and cookie timeouts.
-            response.set_cookie(ANON_COOKIE, request._anon_csrf_key,
-                                httponly=True, secure=request.is_secure())
-            patch_vary_headers(response, ['Cookie'])
         return response
-
-
-def anonymous_csrf(f):
-    """Decorator that assigns a CSRF token to an anonymous user."""
-    f.anonymous_csrf = True
-    return f
-
-
-def anonymous_csrf_exempt(f):
-    """Like @csrf_exempt but only for anonymous requests."""
-    f.anonymous_csrf_exempt = True
-    return f
 
 
 # Replace Django's middleware with our own.
