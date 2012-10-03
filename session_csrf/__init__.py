@@ -1,6 +1,5 @@
 """CSRF protection without cookies."""
 from django.conf import settings
-from django.core.cache import cache
 from django.middleware import csrf as django_csrf
 from django.utils import crypto
 from django.utils.cache import patch_vary_headers
@@ -12,7 +11,7 @@ logger = getLogger('django.request')
 
 CSRF_STRICT_REFERER_CHECKING = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
 CSRF_NUMBER_OF_TOKENS_TO_KEEP = getattr(settings, 'CSRF_NUMBER_OF_TOKENS_TO_KEEP', 5)
-CSRF_REMOVE_UNUSED_TOKENS_AFTER = getattr(settings, 'CSRF_NUMBER_OF_TOKENS_TO_KEEP', 86400)
+CSRF_REMOVE_UNUSED_TOKENS_AFTER = getattr(settings, 'CSRF_REMOVE_UNUSED_TOKENS_AFTER', 86400)
 
 # This overrides django.core.context_processors.csrf to dump our csrf_token
 # into the template context.
