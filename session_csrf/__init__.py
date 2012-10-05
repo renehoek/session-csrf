@@ -154,6 +154,8 @@ class CsrfMiddleware(object):
         if CSRF_REMOVE_USED_TOKENS and remove_this_token:
             self._remove_token_from_session(request, user_token)
             
+        return self._accept(request)
+            
     def process_response(self, request, response):
         return response
 
