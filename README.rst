@@ -22,30 +22,33 @@ Following this OWASP recommendation was a security-requirement for one of our pr
 
 How does this implementation work?
 -----------------------------------
-For a initial request CSRF token is generated and appended to a list of tokens stored in the session.
-In the forms you want to protect you include the CSRF token as a hidden input element
-with the '{{csrf_token}}' template tag. When the form is posted, a check is done on the server
-to see if the posted CSRF Token matches one of the tokens on the list stored in the session.
+When the '{{csrf_token}}' template tag is used in a template, a CSRF token is generated and appended
+to a list of tokens stored in the session.
+The '{{csrf_token}}' template tag adds a hidden input element to the form with the token value.
+When the form is posted, a check is done on the server to see if the posted CSRF Token matches one
+of the tokens on the list stored in the session.
 
-If the server side check is succesful a new CSRF token is generated and appended to
-the list of tokens stored in the session.
+If the server side check is succesful the used token is removed from the session. You
+can override this with the setting 'CSRF_REMOVE_USED_TOKENS'.
 
 The list of tokens stored in the session will store a maximum of 5 CSRF Tokens.
 If a 6th CSRF Token is added, the oldest CSRF Token on the list will be removed.
+You can customize the number of tokens to keep with the setting 'CSRF_NUMBER_OF_TOKENS_TO_KEEP'.
 
-So at any time this CSRF implementation will accept the 5 latests issued CSRF
+So at any time this CSRF implementation will accept the 5 unused latests issued CSRF
 tokens for a particuliar session.
 This is done to prevent the CSRF protection from kicking in when the visitor opens the
 website in a second tab in his browser for example.
 
-If the CSRFToken is added as a 'X_CSRFTOKEN' header in the HTTP POST, no new CSRF token
-is generated. This is done because this HTTP POST is likely to be from a Ajax call
-or something similair. So this Ajax client can do his request multiple times,
-without his CSRFToken to expire.
+If the CSRFToken is added as a 'X_CSRFTOKEN' header in the HTTP POST, the token is
+not removed from the session upon checking. This is done because this HTTP POST is likely
+to be from a Ajax call or something similair. So this Ajax client can do his request
+multiple times, without his CSRFToken to expire.
 
 For each generated CSRF Token in the list a timestamp 'created'
-is kept. CSRF Tokens older then 24 hours are removed from the list.
-This cleaning up is done when a HTTP POST is received by the server.
+is kept. CSRF Tokens older then 1 hour are removed from the list.
+This cleaning up is done when the server receives a POST but before checking the
+received token against the list in the session.
 
 Credits
 -------
@@ -98,11 +101,15 @@ In a SSL setup peform a strict referer check.
 
 CSRF_NUMBER_OF_TOKENS_TO_KEEP = 5
 
-The number of previous issued tokens to keep in the list stored in the session.
+The number of previous issued tokens to keep in the list.
 
-CSRF_REMOVE_UNUSED_TOKENS_AFTER = 86400 
+CSRF_REMOVE_UNUSED_TOKENS_AFTER = 3600 
 
-The max-age in seconds of issued tokens. Tokens older then the max-age are removed from the list stored in the session.
+The max-age in seconds of issued tokens. Tokens older then the max-age are removed from the list.
+
+CSRF_REMOVE_USED_TOKENS = ['True|False'] Default: True
+
+Once a token is used, remove or keep it on the list. Default is to remove the used token from the list.
 
 Disadvantages
 ------------
@@ -169,6 +176,10 @@ Why don't I want this?
 
 1. Storing tokens in sessions means you have to hit your session store more
    often.
+   
+2. When a user submit a form, goes back in his browser with his 'back' button
+   and sends the form again the CSRF protection will kick in. You can
+   override this though with the 'CSRF_REMOVE_USED_TOKENS' setting.
 
 Final Notes
 -----------
