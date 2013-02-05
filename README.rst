@@ -137,7 +137,7 @@ send it as a 'X_CSRFTOKEN' header with the following javascript (assumes jQuery)
 $(document).ajaxSend(function(event, xhr, settings) {
     
     function getElementWithCSRFToken(name) {
-        if (document.getElementsByName(name).length == 1) {
+        if (document.getElementsByName(name).length >= 1) {
             return document.getElementsByName(name)[0].value
         }
         return ""

@@ -49,7 +49,7 @@ class CsrfMiddleware(object):
     def _is_user_token_in_session_tokens(self, request, user_token):
         if 'csrf_tokens' not in request.session:
             return False
-        
+
         for token in request.session['csrf_tokens']:
             if crypto.constant_time_compare(user_token, token['token_value']):
                 return True
