@@ -142,6 +142,10 @@ class CsrfMiddleware(object):
             remove_this_token = False
             user_token = request.META.get('HTTP_X_CSRFTOKEN', '')
 
+        #Keep the token if the view is decorated with @csrf_keep_token
+        if getattr(view_func, 'csrf_keep_token', False):
+            remove_this_token = False
+
         user_token = django_csrf._sanitize_token(user_token)
         
         # Check that both strings match.

@@ -111,6 +111,17 @@ CSRF_REMOVE_USED_TOKENS = ['True|False'] Default: True
 
 Once a token is used, remove or keep it on the list. Default is to remove the used token from the list.
 
+Decorators
+----------
+In decorators.csrf you find the ``csrf_keep_token`` decorator. When you apply this decorator to a view, the used
+token is not removed from the session. This can be usefull if for example you use the jQuery FileUpload plugin. With this
+plugin multiple files can be uploaded (POSTed). If you don't apply the ``csrf_keep_token`` decorator to the
+corresponding 'upload view' the fifth+ upload will fail.
+
+For Ajax calls this decorator is not needed. If a csrftoken is send with the X_CSRFTOKEN header in the http request the
+used token is not removed from the session by default.
+
+
 Disadvantages
 ------------
 This CSRF implemenation is tied to the Django session framework. You can't use it
@@ -165,6 +176,7 @@ $(document).ajaxSend(function(event, xhr, settings) {
 });
 
 
+
 Why do I want this?
 -------------------
 
@@ -181,8 +193,4 @@ Why don't I want this?
    and sends the form again the CSRF protection will kick in. You can
    override this though with the 'CSRF_REMOVE_USED_TOKENS' setting.
 
-Final Notes
------------
-The test-suite included in this project is just a copy of the test-suite
-in the project I based this project on.
-I did not run the test-suite, so it will probably fail.
+
