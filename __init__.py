@@ -14,7 +14,7 @@ logger = getLogger('django.request')
 CSRF_STRICT_REFERER_CHECKING = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
 CSRF_REMOVE_USED_TOKENS = getattr(settings, 'CSRF_REMOVE_USED_TOKENS', True)
 CSRF_NUMBER_OF_TOKENS_TO_KEEP = getattr(settings, 'CSRF_NUMBER_OF_TOKENS_TO_KEEP', 5)
-CSRF_REMOVE_UNUSED_TOKENS_AFTER = getattr(settings, 'CSRF_REMOVE_UNUSED_TOKENS_AFTER', 3600 )
+CSRF_REMOVE_UNUSED_TOKENS_AFTER = getattr(settings, 'CSRF_REMOVE_UNUSED_TOKENS_AFTER', 3600 * 3 )
 
 def add_csrf_token_in_session(request):
     if 'csrf_tokens' not in request.session:
