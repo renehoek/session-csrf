@@ -23,5 +23,8 @@ def csrf_keep_token(view_func):
     """
     def wrapped_view(*args, **kwargs):
         return view_func(*args, **kwargs)
-    wrapped_view.csrf_keep_token = True
+
+    import warnings
+    warnings.warn("In session_csrf the csrf_keep_token is not supported anymore. Remove this decorator from your view", DeprecationWarning)
+
     return wraps(view_func, assigned=available_attrs(view_func))(wrapped_view)
