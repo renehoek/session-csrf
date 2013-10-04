@@ -20,14 +20,15 @@ class CsrfMiddleware(object):
         return None
 
     def _reject(self, request, reason):
+        request.csrf_verification_failed = True
         return django_csrf._get_failure_view()(request, reason)
 
 
-    def _is_user_token_in_session_token(self, request, user_token):
+    def _is_received_token_in_session(self, request, received_token):
         if 'csrf_protection_token' not in request.session:
             return False
 
-        if crypto.constant_time_compare(user_token, request.get_signed_cookie('csrf_protection_token')):
+        if crypto.constant_time_compare(received_token, request.session.get('csrf_protection_token')):
             return True
 
         return False
@@ -77,26 +78,32 @@ class CsrfMiddleware(object):
 
         # Try to get the token from the Signed cookie
 
-        user_token = ''
+        received_token = ''
 
         if request.method == 'POST':
             try:
-                user_token = request.get_signed_cookie('csrf_protection_token')
+                received_token = request.get_signed_cookie('csrf_protection_token')
             except (KeyError, signing.BadSignature):
                 django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
                 return self._reject(request, django_csrf.REASON_BAD_TOKEN)
 
 
-        user_token = django_csrf._sanitize_token(user_token)
+        received_token = django_csrf._sanitize_token(received_token)
 
         # Check that both strings match.
-        if not self._is_user_token_in_session_token(request, user_token):
+        if not self._is_received_token_in_session(request, received_token):
             django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
             return self._reject(request, django_csrf.REASON_BAD_TOKEN)
 
         return self._accept(request)
 
     def process_response(self, request, response):
+        if not hasattr(request, 'session'):
+            return response
+
+        if hasattr(request, 'csrf_verification_failed') and request.csrf_verification_failed == True:
+            return response
+
         token = django_csrf._get_new_csrf_key()
         request.session['csrf_protection_token'] = token
         request.session.modified = True
