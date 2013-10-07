@@ -1,12 +1,12 @@
 """CSRF protection with every time a fresh csrf protection token."""
 from django.conf import settings
 from django.middleware import csrf as django_csrf
-from django.utils import crypto
+
 from django.core import signing
 from django.utils.encoding import force_text
-from django.core.exceptions import SuspiciousOperation, ImproperlyConfigured
+from django.core.exceptions import SuspiciousOperation
 from django.utils.http import same_origin
-import datetime
+
 import tempfile
 import os.path
 import os
@@ -17,25 +17,23 @@ import time
 from django.utils.log import getLogger
 logger = getLogger('django.request')
 
-CSRF_STRICT_REFERER_CHECKING = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
-CSRF_COOKIE_AGE = int(getattr(settings, 'CSRF_COOKIE_AGE', 7200) )
-CSRF_COOKIE_NAME = getattr(settings, 'CSRF_COOKIE_NAME', 'csrftoken')
-CSRF_TOKEN_TTL = float(getattr(settings, 'CSRF_TOKEN_TTL', 7200 ) )
-CSRF_TOKEN_TTL_AFTER_USE = float(getattr(settings, 'CSRF_TOKEN_TTL_AFTER_USE', 10 ) )
-CSRF_TOKEN_MAX_REUSE = getattr(settings, 'CSRF_TOKEN_MAX_REUSE', 4)
-CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES = getattr(settings, 'CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES',
-    ['text/css', 'image/jpeg', 'image/png', 'image/gif', 'image/x-ms-bmp', 'image/tiff', 'application/javascript',
-     'application/pdf', 'application/msword', 'application/vnd.ms-excel', 'application/vnd.ms-powerpoint',
-     'application/x-shockwave-flash', ])
-
-CSRF_TOKEN_FILE_PATH = getattr(settings, 'CSRF_TOKEN_FILE_PATH', '')
-if CSRF_TOKEN_FILE_PATH == '':
-    CSRF_TOKEN_FILE_PATH = os.path.join(getattr(settings, 'SESSION_FILE_PATH', '/tmp/'), 'csrf_tokens')
+MIMETYPES_NO_TOKEN_GENERATION =  ['text/css', 'image/jpeg', 'image/png', 'image/gif', 'image/x-ms-bmp', 'image/tiff',
+                                  'application/javascript', 'application/pdf', 'application/msword',
+                                  'application/vnd.ms-excel', 'application/vnd.ms-powerpoint',
+                                  'application/x-shockwave-flash', ]
 
 class CsrfMiddleware(object):
 
     def __init__(self,):
-        self.file_prefix = CSRF_COOKIE_NAME
+        self.csrf_strict_referer_checking = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
+        self.csrf_cookie_age = int(getattr(settings, 'CSRF_COOKIE_AGE', 7200) )
+        self.csrf_cookie_name = getattr(settings, 'CSRF_COOKIE_NAME', 'csrftoken')
+        self.csrf_token_ttl = float(getattr(settings, 'CSRF_TOKEN_TTL', 7200 ) )
+        self.csrf_token_ttl_after_use = float(getattr(settings, 'CSRF_TOKEN_TTL_AFTER_USE', 10 ) )
+        self.csrf_token_max_reuse = getattr(settings, 'CSRF_TOKEN_MAX_REUSE', 4)
+        self.csrf_donot_generate_token_with_mimetypes = getattr(settings, 'CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES', MIMETYPES_NO_TOKEN_GENERATION)
+
+        self.file_prefix = self.csrf_cookie_name
         self.storage_path = type(self)._get_storage_path()
         super(CsrfMiddleware, self).__init__()
 
@@ -54,7 +52,9 @@ class CsrfMiddleware(object):
         try:
             return cls._storage_path
         except AttributeError:
-            storage_path = CSRF_TOKEN_FILE_PATH
+            storage_path = getattr(settings, 'CSRF_TOKEN_FILE_PATH', '')
+            if storage_path == '':
+                storage_path = os.path.join(getattr(settings, 'SESSION_FILE_PATH', '/tmp/'), 'csrf_tokens')
 
             # Make sure the storage path is valid.
             if not os.path.isdir(storage_path):
@@ -140,9 +140,10 @@ class CsrfMiddleware(object):
 
     def _add_csrf_token_in_session(self, request):
 
+        #noinspection PyProtectedMember
         token = django_csrf._get_new_csrf_key()
 
-        self.__save_token_in_file(token, request.session.session_key, time.time() + CSRF_TOKEN_TTL, 0)
+        self.__save_token_in_file(token, request.session.session_key, time.time() + self.csrf_token_ttl, 0)
 
         return token
 
@@ -155,7 +156,7 @@ class CsrfMiddleware(object):
         use_counter = int(the_lines[2])
         use_counter += 1
 
-        self.__save_token_in_file(received_token, request.session.session_key, time.time() + CSRF_TOKEN_TTL_AFTER_USE, use_counter)
+        self.__save_token_in_file(received_token, request.session.session_key, time.time() + self.csrf_token_ttl_after_use, use_counter)
 
 
     def _is_received_token_in_session(self, request, received_token):
@@ -166,7 +167,7 @@ class CsrfMiddleware(object):
         the_lines = self.__load(received_token)
 
         if the_lines[0] == request.session.session_key and float(the_lines[1]) > time.time() and \
-                        int(the_lines[2]) <=  CSRF_TOKEN_MAX_REUSE:
+                        int(the_lines[2]) <=  self.csrf_token_max_reuse:
             return True
 
         return False
@@ -190,7 +191,7 @@ class CsrfMiddleware(object):
 
         # This is a POST, so insist on a CSRF cookie
 
-        if CSRF_STRICT_REFERER_CHECKING and request.is_secure():
+        if self.csrf_strict_referer_checking and request.is_secure():
             referer = request.META.get('HTTP_REFERER')
             if referer is None:
                 logger.warning('Forbidden (%s): %s',
@@ -220,8 +221,8 @@ class CsrfMiddleware(object):
 
         if request.method == 'POST':
             try:
-                received_token = request.get_signed_cookie(CSRF_COOKIE_NAME)
-                #received_token = request.COOKIES.get(CSRF_COOKIE_NAME)
+                received_token = request.get_signed_cookie(self.csrf_cookie_name)
+                #received_token = request.COOKIES.get(self.csrf_cookie_name)
             except (KeyError, signing.BadSignature):
                 django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
                 return self._reject(request, django_csrf.REASON_BAD_TOKEN)
@@ -250,13 +251,13 @@ class CsrfMiddleware(object):
         content_type = response.get('content-type')
         if content_type is not None:
             mimetype = content_type.split(';')[0]
-            if mimetype in CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES:
+            if mimetype in self.csrf_donot_generate_token_with_mimetypes:
                 return response
 
         token = self._add_csrf_token_in_session(request)
 
-        #response.set_cookie(CSRF_COOKIE_NAME, token)
-        response.set_signed_cookie(CSRF_COOKIE_NAME, token, secure=settings.SESSION_COOKIE_SECURE, max_age=CSRF_COOKIE_AGE, httponly=True)
+        #response.set_cookie(self.csrf_cookie_name, token)
+        response.set_signed_cookie(self.csrf_cookie_name, token, secure=settings.SESSION_COOKIE_SECURE, max_age=self.csrf_cookie_age, httponly=True)
         return response
 
 
