@@ -218,7 +218,7 @@ class SessionCSRFTests(TestCase):
             self.assertIsNotNone(result)
 
     def test_form_post_reissue_expired_token(self):
-        with override_settings(CSRF_COOKIE_AGE=2, CSRF_TOKEN_TTL=2):
+        with override_settings(CSRF_COOKIE_AGE=2, CSRF_TOKEN_TTL=2, CSRF_TOKEN_TTL_AFTER_USE=2):
             request = self.factory.get('/')
             request.session = SessionStore(session_key='abc')
             response = our_text_plain_view(request)
@@ -255,4 +255,59 @@ class SessionCSRFTests(TestCase):
             result = csrf_mw.process_view(request, our_text_plain_view, [], {})
             self.assertTrue(hasattr(request, 'csrf_verification_failed'))
             self.assertIsNotNone(result)
+
+    def test_form_post_strict_referer_check(self):
+        request = self.factory.get('/')
+        request.session = SessionStore(session_key='abc')
+        response = our_text_plain_view(request)
+
+        csrf_mw = CsrfMiddleware()
+        csrf_cookie_name = csrf_mw.csrf_cookie_name
+
+        csrf_mw.process_response(request, response)
+        self.assertNotEqual(response.cookies.get(csrf_cookie_name, None), None)
+
+        factory = RequestFactory()
+        factory.cookies[csrf_cookie_name] = response.cookies.get(csrf_cookie_name, None).value
+        factory.cookies[settings.SESSION_COOKIE_NAME] = 'abc'
+
+
+        referers = [{'referer': 'https://www.google.com', 'result': 'fail'},
+                    {'referer': '', 'result': 'fail'},
+                    {'referer': 'https://testserver:80', 'result': 'ok'},
+                    ]
+
+        for the_referer in referers:
+            http_referer = the_referer.get('referer')
+            expected_result = the_referer.get('result')
+
+            request = factory.post('/', data={'my_name': 'John Doe'}, **{"wsgi.url_scheme": "https", "HTTP_REFERER": http_referer})
+            request.session = SessionStore(session_key='abc')
+
+            result = csrf_mw.process_view(request, our_text_plain_view, [], {})
+            if expected_result == "fail":
+                self.assertTrue(hasattr(request, 'csrf_verification_failed'))
+                self.assertIsNotNone(result)
+            elif expected_result == "ok":
+                self.assertTrue(hasattr(request, 'csrf_processing_done'))
+                self.assertIsNone(result)
+
+        with override_settings(CSRF_STRICT_REFERER_CHECKING=False):
+            csrf_mw = CsrfMiddleware()
+            csrf_cookie_name = csrf_mw.csrf_cookie_name
+
+            csrf_mw.process_response(request, response)
+            self.assertNotEqual(response.cookies.get(csrf_cookie_name, None), None)
+
+            for the_referer in referers:
+                http_referer = the_referer.get('referer')
+
+                request = factory.post('/', data={'my_name': 'John Doe'}, **{"wsgi.url_scheme": "https", "HTTP_REFERER": http_referer})
+                request.session = SessionStore(session_key='abc')
+
+                result = csrf_mw.process_view(request, our_text_plain_view, [], {})
+                self.assertTrue(hasattr(request, 'csrf_processing_done'))
+                self.assertIsNone(result)
+
+
 

@@ -165,8 +165,8 @@ class CsrfMiddleware(object):
             return False
 
         the_lines = self.__load(received_token)
-
-        if the_lines[0] == request.session.session_key and float(the_lines[1]) > time.time() and \
+        now = time.time()
+        if the_lines[0] == request.session.session_key and float(the_lines[1]) > now and \
                         int(the_lines[2]) <=  self.csrf_token_max_reuse:
             return True
 
