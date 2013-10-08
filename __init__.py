@@ -143,6 +143,9 @@ class CsrfMiddleware(object):
         #noinspection PyProtectedMember
         token = django_csrf._get_new_csrf_key()
 
+        if request.session.session_key is None:
+            request.session.cycle_key()
+
         self.__save_token_in_file(token, request.session.session_key, time.time() + self.csrf_token_ttl, 0)
 
         return token
