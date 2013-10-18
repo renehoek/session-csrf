@@ -309,5 +309,13 @@ class SessionCSRFTests(TestCase):
                 self.assertTrue(hasattr(request, 'csrf_processing_done'))
                 self.assertIsNone(result)
 
+    def test_configuration_settings(self):
+        with override_settings(CSRF_TOKEN_FILE_PATH="/if/this/directory/exists/you/have/a/weird/computer"):
+            with self.assertRaises(EnvironmentError):
+                csrf_mw = CsrfMiddleware()
+
+        with override_settings(CSRF_COOKIE_NAME="invalid/csrf/cookiename"):
+            with self.assertRaises(EnvironmentError):
+                csrf_mw = CsrfMiddleware()
 
 

@@ -34,18 +34,13 @@ class CsrfMiddleware(object):
         self.csrf_donot_generate_token_with_mimetypes = getattr(settings, 'CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES', MIMETYPES_NO_TOKEN_GENERATION)
 
         self.file_prefix = self.csrf_cookie_name
+
+        result = re.match('[a-zA-Z0-9_-]+$', force_text(self.file_prefix))
+        if result is None:
+            raise EnvironmentError("Only letters, numbers, '-' and '_' are allowed in the csrf cookie-name")
+
         self.storage_path = type(self)._get_storage_path()
         super(CsrfMiddleware, self).__init__()
-
-    # csrf_processing_done prevents checking CSRF more than once. That could
-    # happen if the requires_csrf_token decorator is used.
-    def _accept(self, request):
-        request.csrf_processing_done = True
-        return None
-
-    def _reject(self, request, reason):
-        request.csrf_verification_failed = True
-        return django_csrf._get_failure_view()(request, reason)
 
     @classmethod
     def _get_storage_path(cls):
@@ -69,7 +64,7 @@ class CsrfMiddleware(object):
 
     def __csrf_token_filename(self, token):
 
-        result = re.match('[a-zA-Z0-9]+', force_text(token))
+        result = re.match('[a-zA-Z0-9]+$', force_text(token))
         if result is None:
             raise SuspiciousOperation("Invalid characters in csrf token")
 
@@ -84,7 +79,7 @@ class CsrfMiddleware(object):
         return os.path.join(folder, self.file_prefix + token)
 
 
-    def __load(self, token):
+    def __load_token_from_file(self, token):
         try:
             with open(self.__csrf_token_filename(token), "rb") as csrf_token_file:
                 file_data = csrf_token_file.read()
@@ -93,6 +88,8 @@ class CsrfMiddleware(object):
             # We may have opened the empty placeholder file.
             if file_data:
                 the_lines = file_data.split("\n")
+                if len(the_lines) != 3: #Something messed up the file
+                    the_lines = ['', '', '0']
             else:
                 the_lines = ['', '', '0']
         except IOError:
@@ -155,7 +152,7 @@ class CsrfMiddleware(object):
         if not os.path.exists(self.__csrf_token_filename(received_token)):
             return
 
-        the_lines = self.__load(received_token)
+        the_lines = self.__load_token_from_file(received_token)
         use_counter = int(the_lines[2])
         use_counter += 1
 
@@ -167,7 +164,7 @@ class CsrfMiddleware(object):
         if not os.path.exists(self.__csrf_token_filename(received_token)):
             return False
 
-        the_lines = self.__load(received_token)
+        the_lines = self.__load_token_from_file(received_token)
         now = time.time()
         if the_lines[0] == request.session.session_key and float(the_lines[1]) > now and \
                         int(the_lines[2]) <=  self.csrf_token_max_reuse:
@@ -186,37 +183,33 @@ class CsrfMiddleware(object):
 
         # Bail if this is a safe method.
         if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
-            return self._accept(request)
+            request.csrf_processing_done = True
+            return None
 
         # The test client uses this to get around CSRF processing.
         if getattr(request, '_dont_enforce_csrf_checks', False):
-            return self._accept(request)
+            request.csrf_processing_done = True
+            return None
 
         # This is a POST, so insist on a CSRF cookie
 
         if self.csrf_strict_referer_checking and request.is_secure():
             referer = request.META.get('HTTP_REFERER')
             if referer is None:
-                logger.warning('Forbidden (%s): %s',
-                               django_csrf.REASON_NO_REFERER, request.path,
-                    extra={
-                        'status_code': 403,
-                        'request': request,
-                    }
-                )
-                return self._reject(request, django_csrf.REASON_NO_REFERER)
+                logger.warning('Forbidden (%s): %s', django_csrf.REASON_NO_REFERER, request.path, extra={ 'status_code': 403, 'request': request,})
+
+                request.csrf_verification_failed = True
+                return django_csrf._get_failure_view()(request, django_csrf.REASON_NO_REFERER)
+
 
             # Note that request.get_host() includes the port.
             good_referer = 'https://%s/' % request.get_host()
             if not same_origin(referer, good_referer):
                 reason = django_csrf.REASON_BAD_REFERER % (referer, good_referer)
-                logger.warning('Forbidden (%s): %s', reason, request.path,
-                    extra={
-                        'status_code': 403,
-                        'request': request,
-                    }
-                )
-                return self._reject(request, reason)
+                logger.warning('Forbidden (%s): %s', reason, request.path, extra={'status_code': 403, 'request': request,})
+
+                request.csrf_verification_failed = True
+                return django_csrf._get_failure_view()(request, reason)
 
         # Try to get the token from the Signed cookie
 
@@ -228,18 +221,24 @@ class CsrfMiddleware(object):
                 #received_token = request.COOKIES.get(self.csrf_cookie_name)
             except (KeyError, signing.BadSignature):
                 django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
-                return self._reject(request, django_csrf.REASON_BAD_TOKEN)
+
+                request.csrf_verification_failed = True
+                return django_csrf._get_failure_view()(request, django_csrf.REASON_BAD_TOKEN)
+
 
         received_token = django_csrf._sanitize_token(received_token)
 
         # Check that both strings match.
         if not self._is_received_token_in_session(request, received_token):
             django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
-            return self._reject(request, django_csrf.REASON_BAD_TOKEN)
+
+            request.csrf_verification_failed = True
+            return django_csrf._get_failure_view()(request, django_csrf.REASON_BAD_TOKEN)
 
         self._decrease_ttl_on_token(request, received_token)
 
-        return self._accept(request)
+        request.csrf_processing_done = True
+        return None
 
     def process_response(self, request, response):
         if not hasattr(request, 'session'):
