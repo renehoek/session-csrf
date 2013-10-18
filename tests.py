@@ -319,3 +319,20 @@ class SessionCSRFTests(TestCase):
                 csrf_mw = CsrfMiddleware()
 
 
+    def test_request_without_accessed_session(self):
+        request = self.factory.get('/robots.txt')
+        request.session = SessionStore()
+        response = our_text_plain_view(request)
+
+        csrf_mw = CsrfMiddleware()
+        result = csrf_mw.process_view(request, our_text_plain_view, [], {})
+        self.assertTrue(hasattr(request, 'csrf_processing_done'))
+        self.assertIsNone(result)
+
+        result = csrf_mw.process_response(request, response)
+        self.assertIsNotNone(request.session.session_key)
+        self.assertTrue(request.session.accessed)
+
+
+
+
