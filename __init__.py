@@ -50,11 +50,6 @@ def get_token(request):
     request.META["CSRF_COOKIE_USED"] = True
     return request.META.get("CSRF_COOKIE", None)
 
-
-def rotate_token_on_a_get(request):
-    if request.method == "GET":
-        rotate_token(request)
-
 def rotate_token(request):
     """
     Changes the CSRF token in use for a request - should be done on login
