@@ -1,277 +1,226 @@
-"""CSRF protection with every time a fresh csrf protection token."""
-from django.conf import settings
-from django.middleware import csrf as django_csrf
+"""
+Cross Site Request Forgery Middleware.
 
-from django.core import signing
-from django.utils.encoding import force_text
-from django.core.exceptions import SuspiciousOperation
-from django.utils.http import same_origin
+This module provides a middleware that implements protection
+against request forgeries from other sites.
+"""
+from __future__ import unicode_literals
 
-import tempfile
-import os.path
-import os
+import logging
 import re
-import time
 
-
-from django.utils.log import getLogger
-logger = getLogger('django.request')
-
-MIMETYPES_NO_TOKEN_GENERATION =  ['text/css', 'image/jpeg', 'image/png', 'image/gif', 'image/x-ms-bmp', 'image/tiff',
-                                  'application/javascript', 'application/pdf', 'application/msword',
-                                  'application/vnd.ms-excel', 'application/vnd.ms-powerpoint',
-                                  'application/x-shockwave-flash', ]
-
-class CsrfMiddleware(object):
-
-    def __init__(self,):
-        self.csrf_strict_referer_checking = getattr(settings, 'CSRF_STRICT_REFERER_CHECKING', True)
-        self.csrf_cookie_age = int(getattr(settings, 'CSRF_COOKIE_AGE', 7200) )
-        self.csrf_cookie_name = getattr(settings, 'CSRF_COOKIE_NAME', 'csrftoken')
-        self.csrf_token_ttl = float(getattr(settings, 'CSRF_TOKEN_TTL', 7200 ) )
-        self.csrf_token_ttl_after_use = float(getattr(settings, 'CSRF_TOKEN_TTL_AFTER_USE', 10 ) )
-        self.csrf_token_max_reuse = getattr(settings, 'CSRF_TOKEN_MAX_REUSE', 4)
-        self.csrf_donot_generate_token_with_mimetypes = getattr(settings, 'CSRF_DONOT_GENERATE_TOKEN_WITH_MIMETYPES', MIMETYPES_NO_TOKEN_GENERATION)
-
-        self.file_prefix = self.csrf_cookie_name
-
-        result = re.match('[a-zA-Z0-9_-]+$', force_text(self.file_prefix))
-        if result is None:
-            raise EnvironmentError("Only letters, numbers, '-' and '_' are allowed in the csrf cookie-name")
-
-        self.storage_path = type(self)._get_storage_path()
-        super(CsrfMiddleware, self).__init__()
-
-    @classmethod
-    def _get_storage_path(cls):
-        try:
-            return cls._storage_path
-        except AttributeError:
-            storage_path = getattr(settings, 'CSRF_TOKEN_FILE_PATH', '')
-            if storage_path == '':
-                storage_path = os.path.join(getattr(settings, 'SESSION_FILE_PATH', '/tmp/'), 'csrf_tokens')
-
-            # Make sure the storage path is valid.
-            if not os.path.isdir(storage_path):
-                try:
-                    os.makedirs(storage_path)
-                except OSError:
-                    raise EnvironmentError("CSRF Token directory '%s' does not exist and could not be created'" % storage_path)
-
-            cls._storage_path = storage_path
-            return storage_path
-
-
-    def __csrf_token_filename(self, token):
-
-        result = re.match('[a-zA-Z0-9]+$', force_text(token))
-        if result is None:
-            raise SuspiciousOperation("Invalid characters in csrf token")
-
-        directory_prefix = token[:2].lower()
-        folder = os.path.join(self.storage_path, directory_prefix)
-        try:
-            if not os.path.exists( folder ):
-                os.makedirs(folder)
-        except (IOError, OSError):
-            raise EnvironmentError("CSRF Token directory '%s' does not exist and could not be created'" % folder)
-
-        return os.path.join(folder, self.file_prefix + token)
-
-
-    def __load_token_from_file(self, token):
-        try:
-            with open(self.__csrf_token_filename(token), "rb") as csrf_token_file:
-                file_data = csrf_token_file.read()
-
-            # Don't fail if there is no data in the csrf token file.
-            # We may have opened the empty placeholder file.
-            if file_data:
-                the_lines = file_data.split("\n")
-                if len(the_lines) != 3: #Something messed up the file
-                    the_lines = ['', '', '0']
-            else:
-                the_lines = ['', '', '0']
-        except IOError:
-            the_lines = ['', '', '0']
-
-        return the_lines
-
-    def __save_token_in_file(self, token, session_key, ttl, use_counter ):
-
-        csrf_token_file_name = self.__csrf_token_filename(token)
-
-        # Make sure the file exists.  If it does not already exist, an
-        # empty placeholder file is created.
-
-        flags = os.O_WRONLY | os.O_CREAT | getattr(os, 'O_BINARY', 0)
-
-        fd = os.open(csrf_token_file_name, flags)
-        os.close(fd)
-
-        # Write the csrf token file without interfering with other threads
-        # or processes.  By writing to an atomically generated temporary
-        # file and then using the atomic os.rename() to make the complete
-        # file visible, we avoid having to lock the csrf token file, while
-        # still maintaining its integrity.
-
-        folder, prefix = os.path.split(csrf_token_file_name)
-
-        try:
-            output_file_fd, output_file_name = tempfile.mkstemp(dir=folder, prefix=prefix + '_out_')
-            renamed = False
-            try:
-                try:
-                    os.write(output_file_fd, "%s\n%f\n%d" % (session_key, ttl, use_counter))
-                finally:
-                    os.close(output_file_fd)
-                os.rename(output_file_name, csrf_token_file_name)
-                renamed = True
-            finally:
-                if not renamed:
-                    os.unlink(output_file_name)
-
-        except (OSError, IOError, EOFError):
-            pass
-
-
-    def _add_csrf_token_in_session(self, request):
-
-        #noinspection PyProtectedMember
-        token = django_csrf._get_new_csrf_key()
-
-        if request.session.session_key is None and not request.session.accessed:
-            request.session.create()
-        elif request.session.session_key is None:
-            request.session.cycle_key()
-
-        self.__save_token_in_file(token, request.session.session_key, time.time() + self.csrf_token_ttl, 0)
-
-        return token
-
-    def _decrease_ttl_on_token(self, request, received_token):
-
-        if not os.path.exists(self.__csrf_token_filename(received_token)):
-            return
-
-        the_lines = self.__load_token_from_file(received_token)
-        use_counter = int(the_lines[2])
-        use_counter += 1
-
-        self.__save_token_in_file(received_token, request.session.session_key, time.time() + self.csrf_token_ttl_after_use, use_counter)
-
-
-    def _is_received_token_in_session(self, request, received_token):
-
-        if not os.path.exists(self.__csrf_token_filename(received_token)):
-            return False
-
-        the_lines = self.__load_token_from_file(received_token)
-        now = time.time()
-        if the_lines[0] == request.session.session_key and float(the_lines[1]) > now and \
-                        int(the_lines[2]) <=  self.csrf_token_max_reuse:
-            return True
-
-        return False
-
-    def process_view(self, request, view_func, args, kwargs):
-        """Check the CSRF token if this is a POST."""
-        if getattr(request, 'csrf_processing_done', False):
-            return None
-
-        # Allow @csrf_exempt views.
-        if getattr(view_func, 'csrf_exempt', False):
-            return None
-
-        # Bail if this is a safe method.
-        if request.method in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
-            request.csrf_processing_done = True
-            return None
-
-        # The test client uses this to get around CSRF processing.
-        if getattr(request, '_dont_enforce_csrf_checks', False):
-            request.csrf_processing_done = True
-            return None
-
-        # This is a POST, so insist on a CSRF cookie
-
-        if self.csrf_strict_referer_checking and request.is_secure():
-            referer = request.META.get('HTTP_REFERER')
-            if referer is None:
-                logger.warning('Forbidden (%s): %s', django_csrf.REASON_NO_REFERER, request.path, extra={ 'status_code': 403, 'request': request,})
-
-                request.csrf_verification_failed = True
-                return django_csrf._get_failure_view()(request, django_csrf.REASON_NO_REFERER)
-
-
-            # Note that request.get_host() includes the port.
-            good_referer = 'https://%s/' % request.get_host()
-            if not same_origin(referer, good_referer):
-                reason = django_csrf.REASON_BAD_REFERER % (referer, good_referer)
-                logger.warning('Forbidden (%s): %s', reason, request.path, extra={'status_code': 403, 'request': request,})
-
-                request.csrf_verification_failed = True
-                return django_csrf._get_failure_view()(request, reason)
-
-        # Try to get the token from the Signed cookie
-
-        received_token = ''
-
-        if request.method == 'POST':
-            try:
-                received_token = request.get_signed_cookie(self.csrf_cookie_name)
-                #received_token = request.COOKIES.get(self.csrf_cookie_name)
-            except (KeyError, signing.BadSignature):
-                django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
-
-                request.csrf_verification_failed = True
-                return django_csrf._get_failure_view()(request, django_csrf.REASON_BAD_TOKEN)
-
-
-        received_token = django_csrf._sanitize_token(received_token)
-
-        # Check that both strings match.
-        if not self._is_received_token_in_session(request, received_token):
-            django_csrf.logger.warning('Forbidden (%s): %s' % (django_csrf.REASON_BAD_TOKEN, request.path), extra=dict(status_code=403, request=request))
-
-            request.csrf_verification_failed = True
-            return django_csrf._get_failure_view()(request, django_csrf.REASON_BAD_TOKEN)
-
-        self._decrease_ttl_on_token(request, received_token)
-
+from django.conf import settings
+from django.core.urlresolvers import get_callable
+from django.utils.cache import patch_vary_headers
+from django.utils.encoding import force_text
+from django.utils.http import same_origin
+from django.utils.crypto import constant_time_compare, get_random_string
+
+
+logger = logging.getLogger('django.request')
+
+REASON_NO_REFERER = "Referer checking failed - no Referer."
+REASON_BAD_REFERER = "Referer checking failed - %s does not match %s."
+REASON_NO_CSRF_COOKIE = "CSRF cookie not set."
+REASON_BAD_TOKEN = "CSRF token missing or incorrect."
+
+CSRF_KEY_LENGTH = 32
+
+def _get_failure_view():
+    """
+    Returns the view to be used for CSRF rejections
+    """
+    return get_callable(settings.CSRF_FAILURE_VIEW)
+
+
+def _get_new_csrf_key():
+    return get_random_string(CSRF_KEY_LENGTH)
+
+
+def get_token(request):
+    """
+    Returns the CSRF token required for a POST form. The token is an
+    alphanumeric value.
+
+    A side effect of calling this function is to make the csrf_protect
+    decorator and the CsrfViewMiddleware add a CSRF cookie and a 'Vary: Cookie'
+    header to the outgoing response.  For this reason, you may need to use this
+    function lazily, as is done by the csrf context processor.
+    """
+    request.META["CSRF_COOKIE_USED"] = True
+    return request.META.get("CSRF_COOKIE", None)
+
+
+def rotate_token_on_a_get(request):
+    if request.method == "GET":
+        rotate_token(request)
+
+def rotate_token(request):
+    """
+    Changes the CSRF token in use for a request - should be done on login
+    for security purposes.
+    """
+    request.META.update({
+        "CSRF_COOKIE_USED": True,
+        "CSRF_COOKIE": _get_new_csrf_key(),
+    })
+
+
+def _sanitize_token(token):
+    # Allow only alphanum
+    if len(token) > CSRF_KEY_LENGTH:
+        return _get_new_csrf_key()
+    token = re.sub('[^a-zA-Z0-9]+', '', force_text(token))
+    if token == "":
+        # In case the cookie has been truncated to nothing at some point.
+        return _get_new_csrf_key()
+    return token
+
+
+class CsrfViewMiddleware(object):
+    """
+    Middleware that requires a present and correct csrfmiddlewaretoken
+    for POST requests that have a CSRF cookie, and sets an outgoing
+    CSRF cookie.
+
+    This middleware should be used in conjunction with the csrf_token template
+    tag.
+    """
+    # The _accept and _reject methods currently only exist for the sake of the
+    # requires_csrf_token decorator.
+    def _accept(self, request):
+        # Avoid checking the request twice by adding a custom attribute to
+        # request.  This will be relevant when both decorator and middleware
+        # are used.
         request.csrf_processing_done = True
         return None
 
+    def _reject(self, request, reason):
+        logger.warning('Forbidden (%s): %s',
+                       reason, request.path,
+            extra={
+                'status_code': 403,
+                'request': request,
+            }
+        )
+        return _get_failure_view()(request, reason=reason)
+
+    def process_view(self, request, callback, callback_args, callback_kwargs):
+
+        if getattr(request, 'csrf_processing_done', False):
+            return None
+
+        try:
+            csrf_token = _sanitize_token(
+                request.COOKIES[settings.CSRF_COOKIE_NAME])
+            # Use same token next time
+            request.META['CSRF_COOKIE'] = csrf_token
+        except KeyError:
+            csrf_token = None
+            # Generate token and store it in the request, so it's
+            # available to the view.
+            request.META["CSRF_COOKIE"] = _get_new_csrf_key()
+
+        # Wait until request.META["CSRF_COOKIE"] has been manipulated before
+        # bailing out, so that get_token still works
+        if getattr(callback, 'csrf_exempt', False):
+            return None
+
+        # Assume that anything not defined as 'safe' by RFC2616 needs protection
+        if request.method not in ('GET', 'HEAD', 'OPTIONS', 'TRACE'):
+            if getattr(request, '_dont_enforce_csrf_checks', False):
+                # Mechanism to turn off CSRF checks for test suite.
+                # It comes after the creation of CSRF cookies, so that
+                # everything else continues to work exactly the same
+                # (e.g. cookies are sent, etc.), but before any
+                # branches that call reject().
+                return self._accept(request)
+
+            if request.is_secure():
+                # Suppose user visits http://example.com/
+                # An active network attacker (man-in-the-middle, MITM) sends a
+                # POST form that targets https://example.com/detonate-bomb/ and
+                # submits it via JavaScript.
+                #
+                # The attacker will need to provide a CSRF cookie and token, but
+                # that's no problem for a MITM and the session-independent
+                # nonce we're using. So the MITM can circumvent the CSRF
+                # protection. This is true for any HTTP connection, but anyone
+                # using HTTPS expects better! For this reason, for
+                # https://example.com/ we need additional protection that treats
+                # http://example.com/ as completely untrusted. Under HTTPS,
+                # Barth et al. found that the Referer header is missing for
+                # same-domain requests in only about 0.2% of cases or less, so
+                # we can use strict Referer checking.
+                referer = request.META.get('HTTP_REFERER')
+                if referer is None:
+                    return self._reject(request, REASON_NO_REFERER)
+
+                # Note that request.get_host() includes the port.
+                good_referer = 'https://%s/' % request.get_host()
+                if not same_origin(referer, good_referer):
+                    reason = REASON_BAD_REFERER % (referer, good_referer)
+                    return self._reject(request, reason)
+
+            if csrf_token is None:
+                # No CSRF cookie. For POST requests, we insist on a CSRF cookie,
+                # and in this way we can avoid all CSRF attacks, including login
+                # CSRF.
+                return self._reject(request, REASON_NO_CSRF_COOKIE)
+
+            # Check non-cookie token for match.
+            request_csrf_token = ""
+            if request.method == "POST":
+                request_csrf_token = request.POST.get('csrfmiddlewaretoken', '')
+
+            if request_csrf_token == "":
+                # Fall back to X-CSRFToken, to make things easier for AJAX,
+                # and possible for PUT/DELETE.
+                request_csrf_token = request.META.get('HTTP_X_CSRFTOKEN', '')
+
+            if not constant_time_compare(request_csrf_token, csrf_token):
+                return self._reject(request, REASON_BAD_TOKEN)
+
+        return self._accept(request)
+
     def process_response(self, request, response):
-        if not hasattr(request, 'session'):
+        if getattr(response, 'csrf_processing_done', False):
             return response
 
-        if hasattr(request, 'csrf_verification_failed') and request.csrf_verification_failed == True:
+        # If CSRF_COOKIE is unset, then CsrfViewMiddleware.process_view was
+        # never called, probaby because a request middleware returned a response
+        # (for example, contrib.auth redirecting to a login page).
+        if request.META.get("CSRF_COOKIE") is None:
             return response
 
-        if response.status_code in [301, 302, 404, 500]:
+        if not request.META.get("CSRF_COOKIE_USED", False):
             return response
 
-        content_type = response.get('content-type')
-        if content_type is not None:
-            mimetype = content_type.split(';')[0]
-            if mimetype in self.csrf_donot_generate_token_with_mimetypes:
-                return response
-
-        token = self._add_csrf_token_in_session(request)
-
-        #response.set_cookie(self.csrf_cookie_name, token)
-        response.set_signed_cookie(self.csrf_cookie_name, token, secure=settings.SESSION_COOKIE_SECURE, max_age=self.csrf_cookie_age, httponly=True)
+        # Set the CSRF cookie even if it's already set, so we renew
+        # the expiry timer.
+        response.set_cookie(settings.CSRF_COOKIE_NAME,
+                            request.META["CSRF_COOKIE"],
+                            max_age = getattr(settings, 'CSRF_COOKIE_MAX_AGE', None) ,
+                            domain=settings.CSRF_COOKIE_DOMAIN,
+                            path=settings.CSRF_COOKIE_PATH,
+                            secure=getattr(settings, 'CSRF_COOKIE_SECURE', True),
+                            httponly=getattr(settings, 'CSRF_COOKIE_HTTPONLY', True)
+                            )
+        # Content varies with the CSRF cookie, so set the Vary header.
+        patch_vary_headers(response, ('Cookie',))
+        response.csrf_processing_done = True
         return response
 
 
-def context_processor(request):
-    import warnings
-    warnings.warn("In session_csrf the context_processor is not required anymore. Remove this from your TEMPLATE_CONTEXT_PROCESSORS in settings.py", DeprecationWarning)
-    return {}
+class CsrfMiddleware(CsrfViewMiddleware):
+    def __init__(self):
+        import warnings
+        warnings.warn("The 'CsrfMiddleware' class was renamed to CsrfViewMiddleware", DeprecationWarning )
+        super(CsrfMiddleware, self).__init__()
 
-# Replace Django's middleware with our own.
+from django.core.context_processors import csrf
+context_processor = csrf
+
 def monkeypatch():
     import warnings
-    warnings.warn("In session_csrf the monkeypath is not required anymore. Remove this call from your main urls.py file", DeprecationWarning)
-
+    warnings.warn("The 'monkeypatch' call is obsolete, please remove it from your urls.py file.", DeprecationWarning )
